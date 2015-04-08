@@ -27,7 +27,7 @@ public class MainActivity extends Activity
 	
 	public void onClick(View v)
 	{
-		String path = "/mnt/sdcard/20150325_000547_18088/20150325_000547_39933.vf";
+		String path = "/mnt/sdcard/20150325_000547_18088/20150408_203120_41615.vf";
 		prepareFFmpeg(path);
 	}
 }
