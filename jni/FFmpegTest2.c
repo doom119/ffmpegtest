@@ -44,8 +44,9 @@ AVCodec* pCodec;
 AVStream *pStream;
 AVCodecContext* pCodecContext;
 AVFrame* pFrame;
-int pts = 0;
-unsigned char* frameDataBuffer;
+unsigned char* frameDataBuffer = NULL;
+int frameDataSize = 0;
+int framePts = 0;
 int frameIndex = 0;
 
 JNIEXPORT void JNICALL Java_com_doom119_ffmpegtest_MainActivity_prepareFFmpeg
@@ -54,6 +55,11 @@ JNIEXPORT void JNICALL Java_com_doom119_ffmpegtest_MainActivity_prepareFFmpeg
 	const char* srcVideoPath = (*env)->GetStringUTFChars(env, path, 0);
 	const char* dstVideoPath = "/mnt/sdcard/ffmpeg_build_video.mp4";
 	LOGD("srcVideoPath=%s, dstVideoPath=%s", srcVideoPath, dstVideoPath);
+
+	frameDataSize = 0;
+	frameDataBuffer = NULL;
+	framePts = 0;
+	frameIndex = 0;
 
 	if(initContext(dstVideoPath))
 		return;
@@ -101,10 +107,10 @@ int toWrite(const char* srcVideoPath)
 
 	do
 	{
-		ret = readFrame(videoFile, &frameHead, srcData);
+		ret = readFrame(videoFile, &frameHead, &srcData);
 		if(ret < 0)
 		{
-			LOGD("readFrame error, ret=%d, pts=%d", ret, pts);
+			LOGD("readFrame error, ret=%d, pts=%d", ret, framePts);
 			return -1;
 		}
 
@@ -115,7 +121,7 @@ int toWrite(const char* srcVideoPath)
 		pFrame->data[2] = srcData + frameHead.vWidth * frameHead.vHeight * 5 / 4;
 		pFrame->linesize[0] = frameHead.vWidth;
 		pFrame->linesize[1] = pFrame->linesize[2] = frameHead.vWidth / 2;
-		pFrame->pts = pts;
+		pFrame->pts = framePts;
 
 		int frameDiff = 1;
 		if(frameIndex == 0)
@@ -134,32 +140,32 @@ int toWrite(const char* srcVideoPath)
 		for(i = 0; i < frameDiff; ++i)
 		{
 
-		av_init_packet(&packet);
-		packet.data = NULL;
-		packet.priv = NULL;
-		packet.size = 0;
+			av_init_packet(&packet);
+			packet.data = NULL;
+			packet.priv = NULL;
+			packet.size = 0;
 
-		ret = avcodec_encode_video2(pStream->codec, &packet, pFrame, &got_output);
-		if(ret < 0)
-		{
-			LOGD("avcodec_encode_video2 error, ret=%d, %s", ret, av_err2str(ret));
-			av_free_packet(&packet);
-			return -2;
-		}
-
-		if(got_output)
-		{
-			packet.stream_index = pStream->index;
-			ret = av_interleaved_write_frame(pFormatContext, &packet);
+			ret = avcodec_encode_video2(pCodecContext, &packet, pFrame, &got_output);
 			if(ret < 0)
 			{
-				LOGD("av_interleaved_write_frame error, %s", av_err2str(ret));
+				LOGD("avcodec_encode_video2 error, ret=%d, %s", ret, av_err2str(ret));
+				av_free_packet(&packet);
+				return -2;
 			}
-		}
-		av_free_packet(&packet);
 
-		pts += av_rescale_q(1, pStream->codec->time_base, pStream->time_base);
-		pFrame->pts = pts;
+			if(got_output)
+			{
+				packet.stream_index = pStream->index;
+				ret = av_interleaved_write_frame(pFormatContext, &packet);
+				if(ret < 0)
+				{
+					LOGD("av_interleaved_write_frame error, %s", av_err2str(ret));
+				}
+			}
+			av_free_packet(&packet);
+
+			framePts += av_rescale_q(1, pCodecContext->time_base, pStream->time_base);
+			pFrame->pts = framePts;
 		}
 
 		frameIndex = frameHead.pFrameIndex;
@@ -173,12 +179,12 @@ int toWrite(const char* srcVideoPath)
 
 unsigned char* getFrameBuffer(int size)
 {
-	if(frameDataBuffer != NULL)
-	{
-		memset(frameDataBuffer, 0, sizeof(unsigned int)*size);
+	if(frameDataSize == size)
 		return frameDataBuffer;
-	}
-	frameDataBuffer = (unsigned char*)malloc(sizeof(unsigned int)*size);
+
+	free(frameDataBuffer);
+	frameDataBuffer = (unsigned char*)malloc(size);
+	frameDataSize = size;
 	return frameDataBuffer;
 }
 
@@ -197,20 +203,20 @@ int readFrame(FILE *videoFile, AVInfo* frameHead, unsigned char** pdata)
 	int srcHeight = frameHead->vHeight;
 	int size = srcWidth * srcHeight * 3 / 2;
 
-	unsigned char* data = getFrameBuffer(size);
-	if(!data)
+	unsigned char* buffer = getFrameBuffer(size);
+	if(!buffer)
 	{
 		return -2;
 	}
 
-	ret = fread(data, size, 1, videoFile);
+	ret = fread(buffer, size, 1, videoFile);
 	//LOGD("read frame data count=%d, size=%d", ret, size);
 	if(ret <= 0)
 	{
 		return -3;
 	}
 
-	*pdata = data;
+	*pdata = buffer;
 
 	return 0;
 }
@@ -250,7 +256,7 @@ int beginWrite(const char* dstVideoPath)
 		return -4;
 	}
 
-	pts = 0;
+	framePts = 0;
 
 	return 0;
 }
